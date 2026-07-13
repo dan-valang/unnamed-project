@@ -86,7 +86,7 @@ function countText(): string {
   const unbought = items.filter((i) => !i.bought).length;
   if (items.length === 0) return 'No goblins yet. Add one before it escapes.';
   if (unbought === 0) return 'All goblins caught. Loot secured.';
-  return `${unbought} goblin${unbought === 1 ? '' : 's'} left to catch.`;
+  return `<span class="num">${unbought}</span> goblin${unbought === 1 ? '' : 's'} left to catch.`;
 }
 
 async function generateShoppingItems(goal: string, spice: number): Promise<ShoppingItem[]> {
@@ -130,7 +130,7 @@ async function handleGoblinIt(): Promise<void> {
   if (!goal) return;
 
   goblinBtn.disabled = true;
-  goblinBtn.textContent = 'Goblin thinking...';
+  goblinBtn.textContent = 'Thinking...';
   status.textContent = '';
   status.className = 'status';
 
@@ -162,49 +162,59 @@ function render(): void {
   }
 
   let html = `
-    <h1>Buy Later Goblin</h1>
-    <p class="helper">Type a vague shopping goal, choose spiciness, and get an editable grouped shopping checklist.</p>
+    <header class="header">
+      <h1>Buy Later <span class="goblin">Goblin</span></h1>
+      <p class="helper">type a vague goal. goblin sorts the loot.</p>
+    </header>
     <div class="controls">
       <div class="input-row">
-        <input id="goal" type="text" placeholder="e.g. taco night, camping breakfast..." autocomplete="off" />
-        <button id="add-btn">Add</button>
+        <input id="goal" type="text" placeholder="taco night, camping breakfast, cleaning day..." autocomplete="off" />
+        <button id="add-btn" class="btn-primary">Add</button>
       </div>
       <div class="spice-row">
-        <label>
-          Spiciness: <strong id="spice-label">3</strong> 🌶️
-          <input id="spice" type="range" min="1" max="5" value="3" />
-        </label>
-        <button id="goblin-btn">Goblin it</button>
+        <span class="spice-label">Spice</span>
+        <span class="spice-value" id="spice-label">3</span>
+        <input id="spice" type="range" min="1" max="5" value="3" />
+        <span class="spice-peppers" id="spice-peppers">🌶️🌶️🌶️</span>
+        <button id="goblin-btn" class="btn-primary">Goblin it</button>
       </div>
     </div>
+    <div class="status" id="status"></div>
     <div class="count">${countText()}</div>
   `;
 
-  for (const [section, sectionItems] of grouped) {
-    if (sectionItems.length === 0) continue;
-    html += `<div class="section-group"><div class="section-title">${section}</div>`;
-    for (const item of sectionItems) {
-      const boughtClass = item.bought ? ' bought' : '';
-      html += `
-        <div class="item" data-id="${item.id}">
-          <input type="checkbox" class="bought-cb" ${item.bought ? 'checked' : ''} />
-          <input type="text" class="name${boughtClass}" value="${escapeHtml(item.name)}" />
-          <input type="text" class="qty" value="${escapeHtml(item.quantity)}" placeholder="qty" />
-          <select class="section-select">
-            ${SECTIONS.map((s) => `<option value="${s}"${s === item.section ? ' selected' : ''}>${s}</option>`).join('')}
-          </select>
-          <button class="danger delete-btn">✕</button>
-        </div>
-      `;
+  if (items.length === 0) {
+    html += `
+      <div class="empty-state">
+        <div class="goblin-face">👺</div>
+        <p>no goblins yet.<br>type something above and hit<br>"goblin it" or "add".</p>
+      </div>
+    `;
+  } else {
+    for (const [section, sectionItems] of grouped) {
+      if (sectionItems.length === 0) continue;
+      html += `<div class="section-group"><div class="section-title">${section}</div>`;
+      for (const item of sectionItems) {
+        const boughtClass = item.bought ? ' bought' : '';
+        html += `
+          <div class="item" data-id="${item.id}">
+            <input type="checkbox" class="bought-cb" ${item.bought ? 'checked' : ''} />
+            <input type="text" class="name${boughtClass}" value="${escapeHtml(item.name)}" />
+            <input type="text" class="qty" value="${escapeHtml(item.quantity)}" placeholder="qty" />
+            <select class="section-select">
+              ${SECTIONS.map((s) => `<option value="${s}"${s === item.section ? ' selected' : ''}>${s}</option>`).join('')}
+            </select>
+            <button class="btn-danger delete-btn">✕</button>
+          </div>
+        `;
+      }
+      html += `</div>`;
     }
-    html += `</div>`;
-  }
 
-  if (items.some((i) => i.bought)) {
-    html += `<div class="clear-row"><button id="clear-btn" class="secondary">Clear bought</button></div>`;
+    if (items.some((i) => i.bought)) {
+      html += `<div class="clear-row"><button id="clear-btn" class="btn-secondary">Clear bought</button></div>`;
+    }
   }
-
-  html += `<div class="status" id="status"></div>`;
 
   app.innerHTML = html;
 
@@ -215,10 +225,13 @@ function render(): void {
   document.querySelector<HTMLButtonElement>('#clear-btn')?.addEventListener('click', clearBought);
   document.querySelector<HTMLButtonElement>('#goblin-btn')?.addEventListener('click', handleGoblinIt);
 
-  document.querySelector<HTMLInputElement>('#spice')?.addEventListener('input', () => {
-    const spice = document.querySelector<HTMLInputElement>('#spice');
+  const spice = document.querySelector<HTMLInputElement>('#spice');
+  spice?.addEventListener('input', () => {
+    const v = spice.value;
     const label = document.querySelector<HTMLSpanElement>('#spice-label');
-    if (spice && label) label.textContent = spice.value;
+    const peppers = document.querySelector<HTMLSpanElement>('#spice-peppers');
+    if (label) label.textContent = v;
+    if (peppers) peppers.textContent = '🌶️'.repeat(parseInt(v, 10));
   });
 
   document.querySelectorAll<HTMLInputElement>('.bought-cb').forEach((cb) => {
