@@ -89,6 +89,68 @@ function countText(): string {
   return `${unbought} goblin${unbought === 1 ? '' : 's'} left to catch.`;
 }
 
+async function generateShoppingItems(goal: string, spice: number): Promise<ShoppingItem[]> {
+  const prompt = `You are a shopping list assistant. Break down this goal into a shopping list: "${goal}"
+
+Spiciness level: ${spice}/5. Higher spiciness means more creative, unusual, or detailed items.
+
+Return ONLY valid JSON with this exact shape, no markdown, no explanation:
+{
+  "items": [
+    { "name": "item name", "quantity": "short quantity", "section": "Produce|Dairy|Meat|Pantry|Frozen|Household|Other" }
+  ]
+}`;
+
+  const response = await puter.ai.chat(prompt, { model: 'gpt-5-nano', temperature: 0.2 });
+  const text = typeof response === 'string' ? response : response.message?.content ?? '';
+
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON found in response');
+
+  const parsed = JSON.parse(jsonMatch[0]);
+  if (!parsed.items || !Array.isArray(parsed.items)) throw new Error('Missing items array');
+
+  return parsed.items.map((raw: Record<string, unknown>) => ({
+    id: createId(),
+    name: String(raw.name ?? '').trim(),
+    quantity: String(raw.quantity ?? '').trim(),
+    section: normalizeSection(String(raw.section ?? 'Other')),
+    bought: false,
+  }));
+}
+
+async function handleGoblinIt(): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>('#goal');
+  const spiceInput = document.querySelector<HTMLInputElement>('#spice');
+  const goblinBtn = document.querySelector<HTMLButtonElement>('#goblin-btn');
+  const status = document.querySelector<HTMLDivElement>('#status');
+  if (!input || !spiceInput || !goblinBtn || !status) return;
+
+  const goal = input.value.trim();
+  if (!goal) return;
+
+  goblinBtn.disabled = true;
+  goblinBtn.textContent = 'Goblin thinking...';
+  status.textContent = '';
+  status.className = 'status';
+
+  try {
+    const generated = await generateShoppingItems(goal, parseInt(spiceInput.value, 10));
+    items.push(...generated);
+    saveItems();
+    input.value = '';
+    status.textContent = `The goblin found ${generated.length} thing${generated.length === 1 ? '' : 's'}.`;
+    status.className = 'status success';
+  } catch {
+    status.textContent = 'The goblin tripped. Add items manually or try again.';
+    status.className = 'status error';
+  } finally {
+    goblinBtn.disabled = false;
+    goblinBtn.textContent = 'Goblin it';
+    render();
+  }
+}
+
 function render(): void {
   const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -106,6 +168,13 @@ function render(): void {
       <div class="input-row">
         <input id="goal" type="text" placeholder="e.g. taco night, camping breakfast..." autocomplete="off" />
         <button id="add-btn">Add</button>
+      </div>
+      <div class="spice-row">
+        <label>
+          Spiciness: <strong id="spice-label">3</strong> 🌶️
+          <input id="spice" type="range" min="1" max="5" value="3" />
+        </label>
+        <button id="goblin-btn">Goblin it</button>
       </div>
     </div>
     <div class="count">${countText()}</div>
@@ -144,6 +213,13 @@ function render(): void {
     if (e.key === 'Enter') addManualItem();
   });
   document.querySelector<HTMLButtonElement>('#clear-btn')?.addEventListener('click', clearBought);
+  document.querySelector<HTMLButtonElement>('#goblin-btn')?.addEventListener('click', handleGoblinIt);
+
+  document.querySelector<HTMLInputElement>('#spice')?.addEventListener('input', () => {
+    const spice = document.querySelector<HTMLInputElement>('#spice');
+    const label = document.querySelector<HTMLSpanElement>('#spice-label');
+    if (spice && label) label.textContent = spice.value;
+  });
 
   document.querySelectorAll<HTMLInputElement>('.bought-cb').forEach((cb) => {
     cb.addEventListener('change', () => {
