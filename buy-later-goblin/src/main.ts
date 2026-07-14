@@ -89,8 +89,55 @@ function countText(): string {
   return `<span class="num">${unbought}</span> goblin${unbought === 1 ? '' : 's'} left to catch.`;
 }
 
+type ModelMeta = { id: string; provider: string; contextK: number; flavor: string };
+
+// ponytail: curated free set; expand when puter adds more reliable free models
+const FREE_MODELS: readonly ModelMeta[] = [
+  { id: 'gpt-5-nano',  provider: 'openai',    contextK: 128, flavor: 'fast generalist' },
+  { id: 'gpt-4o-mini',  provider: 'openai',    contextK: 128, flavor: 'reliable generalist' },
+  { id: 'claude-sonnet-4', provider: 'anthropic', contextK: 200, flavor: 'nuanced, good at lists' },
+  { id: 'gemini-2.0-flash', provider: 'google', contextK: 1000, flavor: 'long-context, fast' },
+  { id: 'llama-3.3-70b', provider: 'meta',     contextK: 128, flavor: 'open-source generalist' },
+  { id: 'deepseek-chat', provider: 'deepseek', contextK: 64,  flavor: 'cheap, decent reasoning' },
+  { id: 'qwen-2.5-72b',  provider: 'alibaba',  contextK: 128, flavor: 'strong multilingual' },
+  { id: 'mistral-large', provider: 'mistral',  contextK: 128, flavor: 'European, structured output' },
+];
+const JUDGE_MODEL = 'gpt-5-nano';
+const FALLBACK_MODEL = 'gpt-5-nano';
+
+async function pickModel(goal: string, spice: number): Promise<ModelMeta> {
+  const catalog = FREE_MODELS.map((m) =>
+    `- ${m.id} | provider=${m.provider} | context=${m.contextK}k | ${m.flavor}`
+  ).join('\n');
+
+  const prompt = `You are a routing judge. Pick the single best free model from the catalog for the task below. Reply with ONLY this JSON, no markdown:\n{"model":"<id>","reason":"<one short sentence>"}\n\nCatalog:\n${catalog}\n\nTask: shopping list for goal "${goal}", spiceness ${spice}/5.`;
+
+  try {
+    const res = await puter.ai.chat(prompt, { model: JUDGE_MODEL, temperature: 0 });
+    const text = typeof res === 'string' ? res : res.message?.content ?? '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      const found = FREE_MODELS.find((m) => m.id === parsed.model);
+      if (found) {
+        console.log(`[goblin-router] chose: ${found.id} (reason: ${parsed.reason ?? 'n/a'})`);
+        return found;
+      }
+    }
+  } catch (e) {
+    console.warn('[goblin-router] judge failed, falling back to round-robin', e);
+  }
+  // ponytail: round-robin fallback when judge is down; deterministic-ish per request
+  const idx = (goal.length + spice) % FREE_MODELS.length;
+  const pick = FREE_MODELS[idx]!;
+  console.log(`[goblin-router] judge unavailable, picked: ${pick.id} (round-robin)`);
+  return pick;
+}
+
 async function generateShoppingItems(goal: string, spice: number): Promise<ShoppingItem[]> {
-  const prompt = `You are a shopping list assistant. Break down this goal into a shopping list: "${goal}"
+  const chosen = await pickModel(goal, spice);
+
+  const systemPrompt = `You are a shopping list assistant. Break down this goal into a shopping list: "${goal}"
 
 Spiciness level: ${spice}/5. Higher spiciness means more creative, unusual, or detailed items.
 
@@ -101,22 +148,35 @@ Return ONLY valid JSON with this exact shape, no markdown, no explanation:
   ]
 }`;
 
-  const response = await puter.ai.chat(prompt, { model: 'gpt-5-nano', temperature: 0.2 });
-  const text = typeof response === 'string' ? response : response.message?.content ?? '';
+  const errors: unknown[] = [];
+  for (const modelId of [chosen.id, FALLBACK_MODEL]) {
+    try {
+      const response = await puter.ai.chat(systemPrompt, { model: modelId, temperature: 0.2 });
+      const text = typeof response === 'string' ? response : response.message?.content ?? '';
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON found in response');
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON found in response');
 
-  const parsed = JSON.parse(jsonMatch[0]);
-  if (!parsed.items || !Array.isArray(parsed.items)) throw new Error('Missing items array');
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (!parsed.items || !Array.isArray(parsed.items)) throw new Error('Missing items array');
 
-  return parsed.items.map((raw: Record<string, unknown>) => ({
-    id: createId(),
-    name: String(raw.name ?? '').trim(),
-    quantity: String(raw.quantity ?? '').trim(),
-    section: normalizeSection(String(raw.section ?? 'Other')),
-    bought: false,
-  }));
+      if (modelId !== chosen.id) {
+        console.log(`[goblin-router] fallback to ${modelId} succeeded`);
+      }
+
+      return parsed.items.map((raw: Record<string, unknown>) => ({
+        id: createId(),
+        name: String(raw.name ?? '').trim(),
+        quantity: String(raw.quantity ?? '').trim(),
+        section: normalizeSection(String(raw.section ?? 'Other')),
+        bought: false,
+      }));
+    } catch (e) {
+      errors.push(e);
+      console.warn(`[goblin-router] ${modelId} failed:`, e);
+    }
+  }
+  throw errors[errors.length - 1] ?? new Error('All models failed');
 }
 
 async function handleGoblinIt(): Promise<void> {
